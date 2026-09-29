@@ -8,6 +8,7 @@
     "dev:worker": "npm run dev:worker -w @fleetflow/api",
     "build": "npm run build -w @fleetflow/api && npm run build -w @fleetflow/web",
     "typecheck": "npm run typecheck -w @fleetflow/api && npm run typecheck -w @fleetflow/web",
-    "test:smoke": "npm run test:smoke -w @fleetflow/api"
+    "test:smoke": "npm run test:smoke -w @fleetflow/api",
+    "test:load": "node load/scenarios.mjs"
   }
 }

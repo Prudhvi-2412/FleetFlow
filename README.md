@@ -72,11 +72,16 @@ npm run typecheck
 npm run build
 npm run test:smoke
 node load/http.mjs
+npm run test:load
 ```
 
 Run `test:smoke` while PostgreSQL, Redis, the API, and the worker are running and an admin has been seeded. It creates test accounts and deliveries in the local database. The HTTP load script defaults to 500 health requests at 25 concurrent requests; set `REQUESTS`, `CONCURRENCY`, `BASE_URL`, and `PATH_TO_TEST` to change it. These are local measurements and should not be presented as AWS production results.
 
-GitHub Actions runs type checks, builds, migrations, and the integration smoke test with temporary PostgreSQL and Redis services. Dockerfiles for the web and API applications are included for the later deployment stage.
+`test:load` also requires the API and worker. It provisions disposable test users and deliveries, then measures authenticated delivery reads, delivery creates, and GPS fan-out to subscribed WebSocket clients. Its defaults are 500 reads, 50 writes, 100 WebSocket clients, and 10 GPS updates per second for 5 seconds. Set `LOAD_READS`, `LOAD_WRITES`, `LOAD_CONCURRENCY`, `LOAD_WS_CLIENTS`, `LOAD_GPS_PER_SECOND`, or `LOAD_GPS_SECONDS` to change the workload. It leaves test rows in the local database. The API currently rate limits each WebSocket client to 20 messages per second, so a single-driver test above that rate measures dropped inputs rather than sustained GPS processing.
+
+On 2026-09-29, a local run using the development API and worker with Docker-hosted PostgreSQL and Redis recorded zero failures across 500 authenticated reads and 50 delivery creates. The read p95 was 48.2 ms and create p95 was 84.8 ms. All 100 subscribed WebSocket clients received location updates. A separate run reached 1,000 subscribed clients, all of which received updates, with a 37 ms p95 fan-out delay calculated from server timestamps. A bounded 10,000-client run took 17.3 seconds to establish the subscriptions; all clients received one coalesced GPS update, with 445 ms p95 delivery delay. That run sent five GPS inputs over one second and did not test sustained traffic. These are single-machine observations, not capacity guarantees or AWS results. Multi-instance load has not been tested.
+
+GitHub Actions is configured to run type checks, application and container builds, migrations, and the integration smoke test with temporary PostgreSQL and Redis services. The workflow has not yet run on GitHub. Dockerfiles for the web and API applications are included for the later deployment stage.
 
 ## Design limits before AWS
 
