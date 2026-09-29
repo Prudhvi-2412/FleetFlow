@@ -1,0 +1,13 @@
+{
+  "name": "fleetflow",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:web": "npm run dev -w @fleetflow/web",
+    "dev:api": "npm run dev -w @fleetflow/api",
+    "dev:worker": "npm run dev:worker -w @fleetflow/api",
+    "build": "npm run build -w @fleetflow/api && npm run build -w @fleetflow/web",
+    "typecheck": "npm run typecheck -w @fleetflow/api && npm run typecheck -w @fleetflow/web",
+    "test:smoke": "npm run test:smoke -w @fleetflow/api"
+  }
+}

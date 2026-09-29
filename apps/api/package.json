@@ -1,0 +1,36 @@
+{
+  "name": "@fleetflow/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev:worker": "tsx watch src/worker.ts",
+    "worker": "node dist/worker.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "db:migrate": "tsx src/migrate.ts",
+    "seed:admin": "tsx src/seed-admin.ts",
+    "test:smoke": "tsx test/smoke.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "express": "^5.0.0",
+    "express-rate-limit": "^8.0.0",
+    "helmet": "^8.0.0",
+    "jose": "^6.0.0",
+    "pg": "^8.0.0",
+    "redis": "^5.0.0",
+    "ws": "^8.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.0.0",
+    "@types/ws": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

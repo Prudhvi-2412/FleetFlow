@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: fleetflow
+          POSTGRES_PASSWORD: fleetflow_dev
+          POSTGRES_DB: fleetflow
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U fleetflow -d fleetflow"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://fleetflow:fleetflow_dev@localhost:5433/fleetflow
+      REDIS_URL: redis://localhost:6380
+      JWT_SECRET: ci-only-secret-with-at-least-thirty-two-characters
+      ADMIN_EMAIL: admin@fleetflow.test
+      ADMIN_PASSWORD: ci-only-admin-password-12345
+      WEB_ORIGIN: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run db:migrate -w @fleetflow/api
+      - run: npm run seed:admin -w @fleetflow/api
+      - name: Run integration smoke test
+        run: |
+          npm run dev:api > /tmp/fleetflow-api.log 2>&1 &
+          npm run dev:worker > /tmp/fleetflow-worker.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3001/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:smoke
