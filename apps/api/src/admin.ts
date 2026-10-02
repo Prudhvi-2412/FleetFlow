@@ -83,7 +83,8 @@ adminRouter.post('/jobs/:id/retry', async (request, response) => {
   const id = z.uuid().safeParse(request.params.id);
   if (!id.success) return response.status(400).json({ error: 'Invalid job ID' });
   const result = await pool.query(
-    `UPDATE jobs SET status = 'PENDING', attempts = 0, run_at = NOW(), claimed_at = NULL, last_error = NULL
+    `UPDATE jobs SET status = 'PENDING', attempts = 0, run_at = NOW(), claimed_at = NULL,
+       dispatched_at = NULL, last_error = NULL
      WHERE id = $1 AND status = 'DEAD' RETURNING id`,
     [id.data],
   );

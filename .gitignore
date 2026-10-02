@@ -6,3 +6,5 @@ dist/
 !.env.example
 *.log
 *.tsbuildinfo
+cdk.out/
+cdk.context.json

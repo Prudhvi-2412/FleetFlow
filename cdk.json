@@ -1,0 +1,7 @@
+{
+  "app": "npx tsx infra/fleetflow.ts",
+  "context": {
+    "fleetflowRegion": "ap-south-2",
+    "adminEmail": "admin@fleetflow.local"
+  }
+}

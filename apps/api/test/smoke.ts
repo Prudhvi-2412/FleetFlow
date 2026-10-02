@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { pool } from '../src/db.js';
 
-const base = 'http://localhost:3001';
+const base = process.env.SMOKE_BASE_URL ?? 'http://localhost:3001';
+const wsBase = base.replace(/^http/, 'ws');
 const customerEmail = `customer-${randomUUID()}@example.test`;
 const driverEmail = `driver-${randomUUID()}@example.test`;
 const password = `Test-${randomUUID()}`;
@@ -92,7 +93,7 @@ function waitWs(ws: WebSocket, type: string, timeoutMs = 5_000): Promise<any> {
   });
 }
 async function openAuthenticated(token: string) {
-  const ws = new WebSocket('ws://localhost:3001/ws');
+  const ws = new WebSocket(`${wsBase}/ws`);
   await new Promise<void>((resolve, reject) => { ws.once('open', () => resolve()); ws.once('error', reject); });
   const authorized = waitWs(ws, 'auth.ok');
   ws.send(JSON.stringify({ type: 'auth', token }));
@@ -175,10 +176,12 @@ const assignments = await Promise.all([
   request(`/api/admin/deliveries/${second.data.id}/assign`, 'POST', { driverId: raceDriver.data.driver.id }, adminToken),
 ]);
 assert.deepEqual(assignments.map((item) => item.status).sort(), [200, 409]);
-const active = await pool.query(
-  "SELECT COUNT(*)::int AS count FROM driver_assignments WHERE driver_id = $1 AND status IN ('OFFERED', 'ACCEPTED')",
-  [raceDriver.data.driver.id],
-);
-assert.equal(active.rows[0].count, 1);
-await pool.end();
+if (!process.env.SMOKE_BASE_URL) {
+  const active = await pool.query(
+    "SELECT COUNT(*)::int AS count FROM driver_assignments WHERE driver_id = $1 AND status IN ('OFFERED', 'ACCEPTED')",
+    [raceDriver.data.driver.id],
+  );
+  assert.equal(active.rows[0].count, 1);
+  await pool.end();
+}
 console.log('Smoke test passed: roles, tracking, idempotency, lifecycle, cancellation, failure, notifications, metrics, concurrent assignment');

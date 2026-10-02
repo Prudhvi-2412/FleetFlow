@@ -1,7 +1,9 @@
 {
   "name": "fleetflow",
   "private": true,
-  "workspaces": ["apps/*"],
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev:web": "npm run dev -w @fleetflow/web",
     "dev:api": "npm run dev -w @fleetflow/api",
@@ -9,6 +11,15 @@
     "build": "npm run build -w @fleetflow/api && npm run build -w @fleetflow/web",
     "typecheck": "npm run typecheck -w @fleetflow/api && npm run typecheck -w @fleetflow/web",
     "test:smoke": "npm run test:smoke -w @fleetflow/api",
-    "test:load": "node load/scenarios.mjs"
+    "test:load": "node load/scenarios.mjs",
+    "infra:typecheck": "tsc --noEmit -p infra/tsconfig.json",
+    "infra:synth": "cdk synth"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1143.0",
+    "aws-cdk-lib": "^2.271.0",
+    "constructs": "^10.8.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }
