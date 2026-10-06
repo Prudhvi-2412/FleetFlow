@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import * as cdk from 'aws-cdk-lib';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as budgets from 'aws-cdk-lib/aws-budgets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -25,11 +26,22 @@ const adminEmail = String(app.node.tryGetContext('adminEmail') ?? 'admin@fleetfl
 const budgetEmail = process.env.FLEETFLOW_BUDGET_EMAIL ?? app.node.tryGetContext('budgetEmail');
 const budgetUsd = Number(app.node.tryGetContext('monthlyBudgetUsd') ?? 25);
 const teardownAt = process.env.FLEETFLOW_TEARDOWN_AT ?? app.node.tryGetContext('teardownAt');
+const customDomainName = app.node.tryGetContext('customDomainName') as string | undefined;
+const customDomainCertificateArn = app.node.tryGetContext('customDomainCertificateArn') as string | undefined;
 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) throw new Error('Set a valid adminEmail CDK context value');
 if (!Number.isFinite(budgetUsd) || budgetUsd <= 0) throw new Error('monthlyBudgetUsd must be positive');
 if (budgetEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(budgetEmail))) throw new Error('budgetEmail must be a valid email');
 if (teardownAt && (typeof teardownAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(teardownAt) || Number.isNaN(Date.parse(teardownAt)))) {
   throw new Error('teardownAt must be a UTC timestamp such as 2026-10-02T18:00:00Z');
+}
+if (Boolean(customDomainName) !== Boolean(customDomainCertificateArn)) {
+  throw new Error('customDomainName and customDomainCertificateArn must be set together');
+}
+if (customDomainName && !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(customDomainName)) {
+  throw new Error('customDomainName must be a lowercase DNS name');
+}
+if (customDomainCertificateArn && !customDomainCertificateArn.startsWith('arn:aws:acm:us-east-1:')) {
+  throw new Error('The CloudFront certificate must be in us-east-1');
 }
 
 class FleetFlowStack extends cdk.Stack {
@@ -234,6 +246,10 @@ class FleetFlowStack extends cdk.Stack {
     });
     const origin = origins.VpcOrigin.withVpcOrigin(httpVpcOrigin);
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
+      ...(customDomainName && customDomainCertificateArn ? {
+        domainNames: [customDomainName],
+        certificate: acm.Certificate.fromCertificateArn(this, 'CustomDomainCertificate', customDomainCertificateArn),
+      } : {}),
       defaultBehavior: {
         origin,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
@@ -245,7 +261,8 @@ class FleetFlowStack extends cdk.Stack {
       comment: 'FleetFlow demo HTTPS and WebSocket entry point',
     });
 
-    new cdk.CfnOutput(this, 'Url', { value: `https://${distribution.distributionDomainName}` });
+    new cdk.CfnOutput(this, 'Url', { value: customDomainName ? `https://${customDomainName}` : `https://${distribution.distributionDomainName}` });
+    new cdk.CfnOutput(this, 'CloudFrontUrl', { value: `https://${distribution.distributionDomainName}` });
     new cdk.CfnOutput(this, 'AdminEmail', { value: adminEmail });
     new cdk.CfnOutput(this, 'AdminPasswordSecretArn', { value: adminPassword.secretArn });
     new cdk.CfnOutput(this, 'DatabaseSecretArn', { value: database.secret!.secretArn });

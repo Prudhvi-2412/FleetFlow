@@ -94,7 +94,7 @@ npm run infra:typecheck
 npm run infra:synth
 ```
 
-FleetFlow is deployed at [https://d21xu3q2u6259r.cloudfront.net](https://d21xu3q2u6259r.cloudfront.net) in Hyderabad. The `FleetFlow` CloudFormation stack reached `UPDATE_COMPLETE` on 2026-10-02. HTTPS page and API health requests returned 200, admin authentication worked, and the live smoke test passed delivery assignment, WebSocket tracking, notifications, idempotency, and roles. The stack has **no automatic teardown schedule**. The existing $25 monthly budget sends alerts but does not stop charges. See [the AWS deployment review](docs/aws-deployment.md) for cost, access, and operations notes.
+FleetFlow is deployed at [https://fleetflow.prudhvik.me](https://fleetflow.prudhvik.me) in Hyderabad, with the [AWS-provided URL](https://d21xu3q2u6259r.cloudfront.net) retained as a fallback. The `FleetFlow` CloudFormation stack reached `UPDATE_COMPLETE` on 2026-10-06. HTTPS page and API health requests returned 200, admin authentication worked, and the live smoke test passed delivery assignment, WebSocket tracking, notifications, idempotency, and roles. The stack has **no automatic teardown schedule**. The existing $25 monthly budget sends alerts but does not stop charges. See [the AWS deployment review](docs/aws-deployment.md) for cost, access, and operations notes.
 
 **Current operating state (2026-10-06): running.** RDS is available, ECS has one healthy task, and the public page and `/api/ready` return HTTP 200. The notification dead-letter queue was replayed and drained after a worker parser fix. The stack has no automatic teardown schedule; review AWS costs and credits while it remains active.
 

@@ -1,6 +1,6 @@
 # AWS deployment review
 
-FleetFlow is deployed in `ap-south-2` (Hyderabad) at [https://d21xu3q2u6259r.cloudfront.net](https://d21xu3q2u6259r.cloudfront.net). The owner chose the AWS Free plan, lowest practical cost, and an AWS-provided HTTPS endpoint. The budget alert email and administrator sign-in are configured privately.
+FleetFlow is deployed in `ap-south-2` (Hyderabad) at [https://fleetflow.prudhvik.me](https://fleetflow.prudhvik.me). The original [CloudFront URL](https://d21xu3q2u6259r.cloudfront.net) remains available. The owner chose the AWS Free plan and lowest practical cost. The budget alert email and administrator sign-in are configured privately.
 
 **Running as of 2026-10-06:** RDS was restarted and became available, ECS was scaled to one healthy task, and the public page and `/api/ready` returned HTTP 200. The stack has no automatic teardown schedule. ElastiCache and the Application Load Balancer incur time-based charges while provisioned. The application had previously been paused on 2026-10-02 at the owner's request.
 
@@ -51,3 +51,7 @@ The owner withdrew the three-day demo teardown on 2026-10-02 and asked to comple
 The stack passed live application integration checks on 2026-10-02. The smoke test leaves disposable users and deliveries in the database; use new test identities on each run.
 
 On 2026-10-06, the notification worker was updated to accept null optional IDs in EventBridge messages. Four earlier notification events were moved from the dead-letter queue back to the live queue and consumed. Both queues then showed zero messages, and the dead-letter alarms returned to `OK`. The ECS rollout finished with one running task and the page and readiness endpoint returned HTTP 200. The production dependency audit reported zero vulnerabilities after `source-map-js` was updated to 1.2.2; the full development dependency audit still reports a high-severity advisory in a bundled CDK dependency.
+
+## Custom domain
+
+The CDK stack accepts `customDomainName` and `customDomainCertificateArn` together. FleetFlow uses an issued DNS-validated ACM certificate in `us-east-1` for `fleetflow.prudhvik.me`. Namecheap has the certificate-validation CNAME and a `fleetflow` CNAME pointing to the CloudFront distribution; keep the validation record for certificate renewal. The CloudFront-provided URL remains available and is also exported as `CloudFrontUrl`. The apex `prudhvik.me` continues to point to GitHub Pages. On 2026-10-06, authoritative and public DNS returned the CloudFront target, and the custom-domain homepage and `/api/ready` returned HTTP 200 with a trusted TLS certificate.
