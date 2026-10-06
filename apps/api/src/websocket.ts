@@ -95,7 +95,14 @@ export function attachWebSocket(server: Server) {
   const expectedOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
   server.on('upgrade', (request, socket, head) => {
     const path = new URL(request.url ?? '/', 'http://localhost').pathname;
-    if (path !== '/ws' || (request.headers.origin && request.headers.origin !== expectedOrigin)) {
+    let originAllowed = !request.headers.origin || request.headers.origin === expectedOrigin;
+    if (expectedOrigin === 'same-host' && request.headers.origin) {
+      try {
+        const origin = new URL(request.headers.origin);
+        originAllowed = origin.protocol === 'https:' && origin.host === request.headers.host;
+      } catch { originAllowed = false; }
+    }
+    if (path !== '/ws' || !originAllowed) {
       socket.destroy();
       return;
     }

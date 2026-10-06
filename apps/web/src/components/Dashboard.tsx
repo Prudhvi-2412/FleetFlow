@@ -78,7 +78,8 @@ export function Dashboard({ session, onSignOut }: { session: Session; onSignOut:
     const connect = () => {
       if (!active) return;
       const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const url = process.env.NEXT_PUBLIC_WS_URL ?? `${scheme}://${window.location.hostname}:3001/ws`;
+      const host = window.location.hostname === 'localhost' ? 'localhost:3001' : window.location.host;
+      const url = process.env.NEXT_PUBLIC_WS_URL ?? `${scheme}://${host}/ws`;
       const ws = new WebSocket(url);
       socket.current = ws;
       setSocketState('Connecting');

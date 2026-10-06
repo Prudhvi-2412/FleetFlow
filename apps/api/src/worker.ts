@@ -1,73 +1,11 @@
 import 'dotenv/config';
-import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
-import { changeStatus, transaction, type Delivery } from './domain.js';
+import { transaction } from './domain.js';
+import { assignDriver } from './assignment.js';
+import { liveEvent, storeNotifications, type OutboxEvent } from './event-handling.js';
 import { connectedRedis, redis } from './redis.js';
 
 type Job = { id: string; kind: string; payload: { deliveryId: string; version: number }; attempts: number };
-type OutboxEvent = {
-  id: string; aggregate_id: string; event_type: string;
-  payload: { customerId?: string; driverId?: string; deliveryId?: string; to?: string };
-};
-
-class RetryableError extends Error {}
-
-function distanceKm(aLat: number, aLng: number, bLat: number, bLng: number) {
-  const radians = (value: number) => value * Math.PI / 180;
-  const dLat = radians(bLat - aLat);
-  const dLng = radians(bLng - aLng);
-  const value = Math.sin(dLat / 2) ** 2 + Math.cos(radians(aLat)) * Math.cos(radians(bLat)) * Math.sin(dLng / 2) ** 2;
-  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-}
-
-async function assignDriver(deliveryId: string, version: number) {
-  return transaction(async (client) => {
-    const result = await client.query<Delivery>('SELECT * FROM deliveries WHERE id = $1 FOR UPDATE', [deliveryId]);
-    const delivery = result.rows[0];
-    if (!delivery || delivery.status !== 'ASSIGNMENT_PENDING' || delivery.version !== version) return;
-
-    const candidates = await client.query<{ user_id: string; last_lat: number; last_lng: number }>(
-      `SELECT d.user_id, d.last_lat, d.last_lng FROM drivers d
-       WHERE d.is_online = TRUE AND d.last_seen_at > NOW() - INTERVAL '2 minutes'
-         AND d.last_lat IS NOT NULL AND d.last_lng IS NOT NULL
-         AND NOT EXISTS (SELECT 1 FROM driver_assignments a WHERE a.driver_id = d.user_id AND a.status IN ('OFFERED', 'ACCEPTED'))
-         AND NOT EXISTS (SELECT 1 FROM driver_assignments a WHERE a.driver_id = d.user_id AND a.delivery_id = $1 AND a.status = 'REJECTED')`,
-      [deliveryId],
-    );
-    const ranked = candidates.rows
-      .map((candidate) => ({ ...candidate, distance: distanceKm(delivery.pickup_lat, delivery.pickup_lng, candidate.last_lat, candidate.last_lng) }))
-      .filter((candidate) => candidate.distance <= 25)
-      .sort((a, b) => a.distance - b.distance);
-
-    for (const candidate of ranked) {
-      const lock = await client.query(
-        'SELECT user_id FROM drivers WHERE user_id = $1 AND is_online = TRUE FOR UPDATE SKIP LOCKED',
-        [candidate.user_id],
-      );
-      if (!lock.rowCount) continue;
-      const busy = await client.query(
-        `SELECT 1 FROM driver_assignments WHERE driver_id = $1 AND status IN ('OFFERED', 'ACCEPTED')`,
-        [candidate.user_id],
-      );
-      if (busy.rowCount) continue;
-      await client.query(
-        `INSERT INTO driver_assignments (id, delivery_id, driver_id, status)
-         VALUES ($1, $2, $3, 'OFFERED')`,
-        [randomUUID(), deliveryId, candidate.user_id],
-      );
-      await client.query('UPDATE deliveries SET driver_id = $2 WHERE id = $1', [deliveryId, candidate.user_id]);
-      await changeStatus(
-        client,
-        { ...delivery, driver_id: candidate.user_id },
-        'DRIVER_ASSIGNED',
-        null,
-        'DriverAssigned',
-      );
-      return;
-    }
-    throw new RetryableError('No available driver within 25 km');
-  });
-}
 
 async function processOneJob() {
   const claimed = await pool.query<Job>(
@@ -99,17 +37,6 @@ async function processOneJob() {
   return true;
 }
 
-function notificationText(eventType: string) {
-  const titles: Record<string, string> = {
-    DeliveryCreated: 'Delivery created', DriverAssigned: 'Driver assigned',
-    DeliveryAccepted: 'Driver accepted', DriverRejected: 'Driver declined',
-    DeliveryPickedUp: 'Package picked up', DeliveryStarted: 'Out for delivery',
-    DriverArrived: 'Driver arrived', DeliveryCompleted: 'Delivery completed',
-    DeliveryFailed: 'Delivery failed', DeliveryCancelled: 'Delivery cancelled',
-  };
-  return titles[eventType] ?? eventType;
-}
-
 async function processOneEvent() {
   return transaction(async (client) => {
     const result = await client.query<OutboxEvent>(
@@ -117,16 +44,9 @@ async function processOneEvent() {
     );
     const item = result.rows[0];
     if (!item) return false;
-    const recipients = [...new Set([item.payload.customerId, item.payload.driverId].filter((value): value is string => !!value))];
-    for (const userId of recipients) {
-      await client.query(
-        `INSERT INTO notifications (id, event_id, user_id, delivery_id, title, body)
-         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (event_id, user_id) DO NOTHING`,
-        [randomUUID(), item.id, userId, item.aggregate_id, notificationText(item.event_type), `Delivery ${item.aggregate_id}`],
-      );
-    }
+    await storeNotifications(client, item);
     const redis = await connectedRedis();
-    await redis.publish('fleetflow:events', JSON.stringify({ type: 'delivery.event', eventType: item.event_type, ...item.payload }));
+    await redis.publish('fleetflow:events', JSON.stringify(liveEvent(item)));
     await client.query('UPDATE outbox_events SET published_at = NOW(), attempts = attempts + 1 WHERE id = $1', [item.id]);
     return true;
   });

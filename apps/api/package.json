@@ -9,12 +9,16 @@
     "start": "node dist/server.js",
     "dev:worker": "tsx watch src/worker.ts",
     "worker": "node dist/worker.js",
+    "worker:aws": "node dist/aws-worker.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "tsx src/migrate.ts",
     "seed:admin": "tsx src/seed-admin.ts",
-    "test:smoke": "tsx test/smoke.ts"
+    "test:smoke": "tsx test/smoke.ts",
+    "test:aws-event": "tsx test/aws-event-message.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-eventbridge": "^3.1142.0",
+    "@aws-sdk/client-sqs": "^3.1142.0",
     "dotenv": "^16.0.0",
     "express": "^5.0.0",
     "express-rate-limit": "^8.0.0",

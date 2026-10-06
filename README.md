@@ -1,6 +1,6 @@
 # FleetFlow
 
-FleetFlow is a delivery and fleet operations project built with Next.js, Express, PostgreSQL, Redis, and WebSockets. The local application is runnable without an AWS account. AWS infrastructure and managed service integration are the next stage.
+FleetFlow is a delivery and fleet operations project built with Next.js, Express, PostgreSQL, Redis, and WebSockets. The local application runs without an AWS account. An AWS deployment stack and SQS/EventBridge worker are prepared, but have not been deployed.
 
 ## What works locally
 
@@ -22,7 +22,7 @@ Browser (Next.js :3000)
 PostgreSQL jobs + outbox → separate worker → assignment + notifications
 ```
 
-The local PostgreSQL job table is the durable queue. The outbox is the local domain event mechanism. **SQS and EventBridge are not yet running**; they will be connected during the AWS stage. The WebSocket server is hosted by Express locally. The AWS stage will decide whether to retain that path behind a load balancer or move connection management to API Gateway WebSocket API.
+The local PostgreSQL job table is the durable queue. The outbox is the local domain event mechanism. On AWS, the separate worker forwards assignment jobs to SQS and outbox events to EventBridge. An EventBridge rule sends events to an SQS notification queue. Express serves WebSockets behind an internal Application Load Balancer and CloudFront. **These AWS paths have not been exercised in a live account.**
 
 ## Requirements
 
@@ -72,16 +72,38 @@ npm run typecheck
 npm run build
 npm run test:smoke
 node load/http.mjs
+npm run test:load
 ```
 
 Run `test:smoke` while PostgreSQL, Redis, the API, and the worker are running and an admin has been seeded. It creates test accounts and deliveries in the local database. The HTTP load script defaults to 500 health requests at 25 concurrent requests; set `REQUESTS`, `CONCURRENCY`, `BASE_URL`, and `PATH_TO_TEST` to change it. These are local measurements and should not be presented as AWS production results.
 
-GitHub Actions runs type checks, builds, migrations, and the integration smoke test with temporary PostgreSQL and Redis services. Dockerfiles for the web and API applications are included for the later deployment stage.
+`test:load` also requires the API and worker. It provisions disposable test users and deliveries, then measures authenticated delivery reads, delivery creates, and GPS fan-out to subscribed WebSocket clients. Its defaults are 500 reads, 50 writes, 100 WebSocket clients, and 10 GPS updates per second for 5 seconds. Set `LOAD_READS`, `LOAD_WRITES`, `LOAD_CONCURRENCY`, `LOAD_WS_CLIENTS`, `LOAD_GPS_PER_SECOND`, or `LOAD_GPS_SECONDS` to change the workload. It leaves test rows in the local database. The API currently rate limits each WebSocket client to 20 messages per second, so a single-driver test above that rate measures dropped inputs rather than sustained GPS processing.
 
-## Design limits before AWS
+On 2026-09-29, a local run using the development API and worker with Docker-hosted PostgreSQL and Redis recorded zero failures across 500 authenticated reads and 50 delivery creates. The read p95 was 48.2 ms and create p95 was 84.8 ms. All 100 subscribed WebSocket clients received location updates. A separate run reached 1,000 subscribed clients, all of which received updates, with a 37 ms p95 fan-out delay calculated from server timestamps. A bounded 10,000-client run took 17.3 seconds to establish the subscriptions; all clients received one coalesced GPS update, with 445 ms p95 delivery delay. That run sent five GPS inputs over one second and did not test sustained traffic. These are single-machine observations, not capacity guarantees or AWS results. Multi-instance load has not been tested.
+
+GitHub Actions is configured to run type checks, application and container builds, migrations, and the integration smoke test with temporary PostgreSQL and Redis services. The workflow has not yet run on GitHub. Dockerfiles for the web and API applications are included.
+
+## AWS deployment
+
+`infra/fleetflow.ts` defines a CDK application stack for `ap-south-2` (Hyderabad). It includes one ARM64 ECS Fargate task with web, API, and worker containers; an internal load balancer behind a CloudFront HTTPS endpoint; private RDS PostgreSQL and ElastiCache Valkey; SQS queues with dead-letter queues; EventBridge; Secrets Manager; and CloudWatch logs and alarms. The VPC has no NAT gateway. A separate `FleetFlowBudget` stack in `us-east-1` is included when `FLEETFLOW_BUDGET_EMAIL` is set. The default alert threshold is $25/month and can be changed with CDK context `monthlyBudgetUsd`; **a budget alerts you but does not cap spending**.
+
+Check the template without creating AWS resources:
+
+```powershell
+npm run infra:typecheck
+npm run infra:synth
+```
+
+FleetFlow is deployed at [https://fleetflow.prudhvik.me](https://fleetflow.prudhvik.me) in Hyderabad, with the [AWS-provided URL](https://d21xu3q2u6259r.cloudfront.net) retained as a fallback. The `FleetFlow` CloudFormation stack reached `UPDATE_COMPLETE` on 2026-10-06. HTTPS page and API health requests returned 200, admin authentication worked, and the live smoke test passed delivery assignment, WebSocket tracking, notifications, idempotency, and roles. The stack has **no automatic teardown schedule**. The existing $25 monthly budget sends alerts but does not stop charges. See [the AWS deployment review](docs/aws-deployment.md) for cost, access, and operations notes.
+
+**Current operating state (2026-10-06): running.** RDS is available, ECS has one healthy task, and the public page and `/api/ready` return HTTP 200. The notification dead-letter queue was replayed and drained after a worker parser fix. The stack has no automatic teardown schedule; review AWS costs and credits while it remains active.
+
+The app admin email is supplied at deployment. Its generated password is in AWS Secrets Manager in `ap-south-2`; retrieve it privately from the `AdminPassword` secret. Use a non-root AWS profile for later updates.
+
+## Design limits
 
 - Auth tokens expire after 15 minutes and live only in browser memory. Refreshing the page requires signing in again. Password reset, email verification, and refresh tokens are future account features.
 - The auth rate limiter is per API process. A shared rate limit store is needed when running many instances.
 - Assignment uses last sampled driver location in PostgreSQL for durable eligibility and Redis for live tracking. It uses a simple 25 km radius and straight-line distance; road routing and ETA are not included.
 - Location is hot state. Redis keeps the latest location for 60 seconds; PostgreSQL samples it at most every 10 seconds. Some intermediate GPS points can be lost by design.
-- The local worker polls PostgreSQL. AWS SQS and EventBridge integration, managed networking, secrets, observability dashboards, autoscaling, and deployment are still pending.
+- The local worker polls PostgreSQL. The AWS worker, managed networking, secrets, and basic alarms passed the live deployment smoke test. Autoscaling and dedicated dashboards are future improvements.
