@@ -2,7 +2,7 @@
 
 FleetFlow is deployed in `ap-south-2` (Hyderabad) at [https://d21xu3q2u6259r.cloudfront.net](https://d21xu3q2u6259r.cloudfront.net). The owner chose the AWS Free plan, lowest practical cost, and an AWS-provided HTTPS endpoint. The budget alert email and administrator sign-in are configured privately.
 
-**Paused on 2026-10-02 at the owner's request:** ECS desired/running tasks were verified at 0 and RDS status at `stopped`. Resume RDS and wait for it to become available before scaling ECS to 1. ElastiCache and the Application Load Balancer continue to incur time-based charges while paused. RDS can restart automatically after seven days.
+**Running as of 2026-10-06:** RDS was restarted and became available, ECS was scaled to one healthy task, and the public page and `/api/ready` returned HTTP 200. The stack has no automatic teardown schedule. ElastiCache and the Application Load Balancer incur time-based charges while provisioned. The application had previously been paused on 2026-10-02 at the owner's request.
 
 ## Account and deployment check — 2026-10-02
 
@@ -49,3 +49,5 @@ The owner withdrew the three-day demo teardown on 2026-10-02 and asked to comple
 8. After project completion, review cost and duration with the owner. When deletion is requested, check for retained RDS snapshots, ECR assets, logs, and Secrets Manager secrets that may continue to consume credits.
 
 The stack passed live application integration checks on 2026-10-02. The smoke test leaves disposable users and deliveries in the database; use new test identities on each run.
+
+On 2026-10-06, the notification worker was updated to accept null optional IDs in EventBridge messages. Four earlier notification events were moved from the dead-letter queue back to the live queue and consumed. Both queues then showed zero messages, and the dead-letter alarms returned to `OK`. The ECS rollout finished with one running task and the page and readiness endpoint returned HTTP 200. The production dependency audit reported zero vulnerabilities after `source-map-js` was updated to 1.2.2; the full development dependency audit still reports a high-severity advisory in a bundled CDK dependency.

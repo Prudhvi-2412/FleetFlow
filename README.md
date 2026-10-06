@@ -96,7 +96,7 @@ npm run infra:synth
 
 FleetFlow is deployed at [https://d21xu3q2u6259r.cloudfront.net](https://d21xu3q2u6259r.cloudfront.net) in Hyderabad. The `FleetFlow` CloudFormation stack reached `UPDATE_COMPLETE` on 2026-10-02. HTTPS page and API health requests returned 200, admin authentication worked, and the live smoke test passed delivery assignment, WebSocket tracking, notifications, idempotency, and roles. The stack has **no automatic teardown schedule**. The existing $25 monthly budget sends alerts but does not stop charges. See [the AWS deployment review](docs/aws-deployment.md) for cost, access, and operations notes.
 
-**Current operating state (2026-10-02): paused at the owner's request.** ECS desired and running task counts are zero, and RDS is stopped. The public URL will not serve the app until both are restarted. ElastiCache and the load balancer remain provisioned and billable.
+**Current operating state (2026-10-06): running.** RDS is available, ECS has one healthy task, and the public page and `/api/ready` return HTTP 200. The notification dead-letter queue was replayed and drained after a worker parser fix. The stack has no automatic teardown schedule; review AWS costs and credits while it remains active.
 
 The app admin email is supplied at deployment. Its generated password is in AWS Secrets Manager in `ap-south-2`; retrieve it privately from the `AdminPassword` secret. Use a non-root AWS profile for later updates.
 

@@ -7,6 +7,7 @@ import { pool } from './db.js';
 import { transaction } from './domain.js';
 import { liveEvent, storeNotifications, type OutboxEvent } from './event-handling.js';
 import { connectedRedis, redis } from './redis.js';
+import { eventMessage } from './aws-event-message.js';
 
 const assignmentQueue = process.env.ASSIGNMENT_QUEUE_URL;
 const notificationQueue = process.env.NOTIFICATION_QUEUE_URL;
@@ -24,18 +25,6 @@ function stop() { running = false; abort.abort(); }
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const jobMessage = z.object({ jobId: z.uuid() });
-const eventMessage = z.object({
-  detail: z.object({
-    eventId: z.string().regex(/^\d+$/),
-    aggregateId: z.uuid(),
-    eventType: z.string().min(1),
-    payload: z.object({
-      customerId: z.string().optional(), driverId: z.string().optional(),
-      deliveryId: z.string().optional(), to: z.string().optional(),
-    }).passthrough(),
-  }),
-});
-
 async function dispatchOneJob() {
   return transaction(async (client) => {
     const found = await client.query<{ id: string }>(

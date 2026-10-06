@@ -42,6 +42,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run test:aws-event -w @fleetflow/api
       - name: Build API container
         run: docker build -f apps/api/Dockerfile -t fleetflow-api:ci .
       - name: Build web container

@@ -112,6 +112,7 @@ class FleetFlowStack extends cdk.Stack {
         metric: dead.metricApproximateNumberOfMessagesVisible(),
         threshold: 1,
         evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       });
       return { live, dead };
     };
