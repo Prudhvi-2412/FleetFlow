@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GitHub Actions OIDC role for FleetFlow deployments from main
+
+Resources:
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: FleetFlowGitHubDeploy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - repo:Prudhvi-2412/FleetFlow:ref:refs/heads/main
+                  - repo:Prudhvi-2412@*/FleetFlow@*:ref:refs/heads/main
+      Policies:
+        - PolicyName: FleetFlowCdkDeploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-deploy-role-${AWS::AccountId}-ap-south-2
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-ap-south-2
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-image-publishing-role-${AWS::AccountId}-ap-south-2
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-lookup-role-${AWS::AccountId}-ap-south-2
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                Resource: !Sub arn:aws:cloudformation:ap-south-2:${AWS::AccountId}:stack/FleetFlow/*
+              - Effect: Allow
+                Action: cloudfront:GetDistributionConfig
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:ap-south-2:${AWS::AccountId}:parameter/cdk-bootstrap/hnb659fds/version
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt GitHubDeployRole.Arn
+

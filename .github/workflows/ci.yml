@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: fleetflow-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -42,6 +49,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run infra:typecheck
       - run: npm run test:aws-event -w @fleetflow/api
       - name: Build API container
         run: docker build -f apps/api/Dockerfile -t fleetflow-api:ci .
@@ -58,3 +66,58 @@ jobs:
             sleep 1
           done
           npm run test:smoke
+
+  deploy:
+    name: Deploy to AWS
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - run: npm ci
+      - name: Check AWS role configuration
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.FLEETFLOW_AWS_ROLE_ARN }}
+        run: test -n "$DEPLOY_ROLE_ARN" || { echo 'Set repository variable FLEETFLOW_AWS_ROLE_ARN first'; exit 1; }
+      - name: Use short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.FLEETFLOW_AWS_ROLE_ARN }}
+          aws-region: ap-south-2
+      - name: Read the live stack settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          account=$(aws sts get-caller-identity --query Account --output text)
+          test "$account" = '213470585464'
+          admin_email=$(aws cloudformation describe-stacks --stack-name FleetFlow --query "Stacks[0].Outputs[?OutputKey=='AdminEmail'].OutputValue | [0]" --output text)
+          distribution_id=$(aws cloudformation list-stack-resources --stack-name FleetFlow --query "StackResourceSummaries[?ResourceType=='AWS::CloudFront::Distribution'].PhysicalResourceId | [0]" --output text)
+          distribution=$(aws cloudfront get-distribution-config --id "$distribution_id")
+          domain=$(jq -r '.DistributionConfig.Aliases.Items[0] // empty' <<< "$distribution")
+          certificate=$(jq -r '.DistributionConfig.ViewerCertificate.ACMCertificateArn // empty' <<< "$distribution")
+          test "$admin_email" != None && test -n "$admin_email"
+          test "$domain" = 'fleetflow.prudhvik.me'
+          [[ "$certificate" == arn:aws:acm:us-east-1:213470585464:certificate/* ]]
+          echo "FLEETFLOW_ADMIN_EMAIL=$admin_email" >> "$GITHUB_ENV"
+          echo "FLEETFLOW_DOMAIN=$domain" >> "$GITHUB_ENV"
+          echo "FLEETFLOW_CERTIFICATE_ARN=$certificate" >> "$GITHUB_ENV"
+      - name: Deploy FleetFlow
+        shell: bash
+        run: |
+          npx cdk deploy FleetFlow --require-approval never \
+            -c "adminEmail=$FLEETFLOW_ADMIN_EMAIL" \
+            -c "customDomainName=$FLEETFLOW_DOMAIN" \
+            -c "customDomainCertificateArn=$FLEETFLOW_CERTIFICATE_ARN"
+      - name: Check live readiness
+        run: curl --fail --silent --show-error --retry 10 --retry-delay 15 --retry-all-errors https://fleetflow.prudhvik.me/api/ready
+

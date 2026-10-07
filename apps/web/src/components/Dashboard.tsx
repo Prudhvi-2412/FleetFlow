@@ -7,6 +7,8 @@ import { MapView } from './MapView';
 
 type DriverProfile = { user_id: string; is_online: boolean; last_lat: number | null; last_lng: number | null };
 type SocketMessage = { type: string; deliveryId?: string; driverId?: string; lat?: number; lng?: number; timestamp?: string; location?: Location | null };
+type DeliveryInput = { pickup: { address: string; lat: number; lng: number }; dropoff: { address: string; lat: number; lng: number } };
+type PendingDelivery = { key: string; input: DeliveryInput };
 
 function shortId(id: string) { return id.slice(0, 8).toUpperCase(); }
 function date(value: string) { return new Date(value).toLocaleString(); }
@@ -182,7 +184,7 @@ export function Dashboard({ session, onSignOut }: { session: Session; onSignOut:
         <div className="content">
           <div className="page-heading"><div><p className="eyebrow">{user.role === 'customer' ? 'CUSTOMER PORTAL' : user.role === 'driver' ? 'DRIVER CONSOLE' : 'FLEET COMMAND'}</p><h1>{user.role === 'customer' ? 'Your deliveries' : user.role === 'driver' ? 'Your route' : 'Fleet overview'}</h1></div><button className="secondary" onClick={() => void refresh()}>Refresh data</button></div>
           {notice && <div className="notice" role="status">{notice}</div>}
-          {user.role === 'customer' && <CustomerPanel token={token} selected={selected} busy={busy} action={action} />}
+          {user.role === 'customer' && <CustomerPanel customerId={user.id} token={token} selected={selected} busy={busy} action={action} />}
           {user.role === 'driver' && <DriverPanel token={token} profile={driverProfile} selected={selected} busy={busy} action={action} toggleGps={toggleGps} gpsActive={gpsWatch.current !== null} sendGps={sendGps} />}
           {user.role === 'admin' && <AdminPanel token={token} drivers={drivers} jobs={jobs} metrics={metrics} selected={selected} busy={busy} action={action} />}
           <div className="grid-main">
@@ -208,30 +210,85 @@ export function Dashboard({ session, onSignOut }: { session: Session; onSignOut:
   );
 }
 
-function CustomerPanel({ token, selected, busy, action }: { token: string; selected: Delivery | null; busy: boolean; action: (work: () => Promise<unknown>, success: string) => Promise<void> }) {
+function CustomerPanel({ customerId, token, selected, busy, action }: { customerId: string; token: string; selected: Delivery | null; busy: boolean; action: (work: () => Promise<unknown>, success: string) => Promise<void> }) {
   const [pickupAddress, setPickupAddress] = useState('MG Road, Bengaluru');
   const [pickupLat, setPickupLat] = useState('12.9750');
   const [pickupLng, setPickupLng] = useState('77.6060');
   const [dropoffAddress, setDropoffAddress] = useState('Indiranagar, Bengaluru');
   const [dropoffLat, setDropoffLat] = useState('12.9719');
   const [dropoffLng, setDropoffLng] = useState('77.6412');
+  const [pending, setPending] = useState<PendingDelivery | null>(null);
+  const [ready, setReady] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const submitting = useRef(false);
+  const storageKey = `fleetflow:pending-delivery:${customerId}`;
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      if (saved) {
+        const attempt = JSON.parse(saved) as PendingDelivery;
+        if (typeof attempt.key === 'string' && attempt.input?.pickup && attempt.input?.dropoff) {
+          setPending(attempt);
+          setPickupAddress(attempt.input.pickup.address);
+          setPickupLat(String(attempt.input.pickup.lat));
+          setPickupLng(String(attempt.input.pickup.lng));
+          setDropoffAddress(attempt.input.dropoff.address);
+          setDropoffLat(String(attempt.input.dropoff.lat));
+          setDropoffLng(String(attempt.input.dropoff.lng));
+          setUncertain(true);
+        } else sessionStorage.removeItem(storageKey);
+      }
+    } catch { /* In-memory retry still works if session storage is unavailable. */ }
+    setReady(true);
+  }, [storageKey]);
+
+  function clearPending() {
+    setPending(null);
+    setUncertain(false);
+    try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be unavailable. */ }
+  }
+
   function submit(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    void action(() => api('/deliveries', token, {
-      method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      body: JSON.stringify({ pickup: { address: pickupAddress, lat: Number(pickupLat), lng: Number(pickupLng) }, dropoff: { address: dropoffAddress, lat: Number(dropoffLat), lng: Number(dropoffLng) } }),
-    }), 'Delivery created. Searching for an available driver.');
+    if (busy || !ready || submitting.current) return;
+    submitting.current = true;
+    const attempt = pending ?? {
+      key: crypto.randomUUID(),
+      input: { pickup: { address: pickupAddress, lat: Number(pickupLat), lng: Number(pickupLng) }, dropoff: { address: dropoffAddress, lat: Number(dropoffLat), lng: Number(dropoffLng) } },
+    };
+    if (!pending) {
+      setPending(attempt);
+      try { sessionStorage.setItem(storageKey, JSON.stringify(attempt)); } catch { /* Keep the attempt in memory. */ }
+    }
+    void action(async () => {
+      try {
+        await api('/deliveries', token, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': attempt.key },
+          body: JSON.stringify(attempt.input),
+        });
+        clearPending();
+      } catch (error) {
+        // A network or server error can happen after the delivery was committed.
+        // Keep both the key and the exact request so retrying cannot create another one.
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) && error.status !== 401) clearPending();
+        else setUncertain(true);
+        throw error;
+      }
+    }, 'Delivery created. Searching for an available driver.').finally(() => { submitting.current = false; });
   }
   return <section className="card create-card"><div className="card-heading"><h2>Create a delivery</h2><span className="muted">Enter real coordinates for a local demo</span></div><form className="delivery-form" onSubmit={submit}>
-    <label>Pickup address<input value={pickupAddress} onChange={(event) => setPickupAddress(event.target.value)} required /></label>
-    <label>Latitude<input type="number" step="any" value={pickupLat} onChange={(event) => setPickupLat(event.target.value)} required /></label>
-    <label>Longitude<input type="number" step="any" value={pickupLng} onChange={(event) => setPickupLng(event.target.value)} required /></label>
-    <label>Drop-off address<input value={dropoffAddress} onChange={(event) => setDropoffAddress(event.target.value)} required /></label>
-    <label>Latitude<input type="number" step="any" value={dropoffLat} onChange={(event) => setDropoffLat(event.target.value)} required /></label>
-    <label>Longitude<input type="number" step="any" value={dropoffLng} onChange={(event) => setDropoffLng(event.target.value)} required /></label>
-    <button className="primary" disabled={busy}>Create delivery <span>→</span></button>
-  </form>{selected && ['ASSIGNMENT_PENDING', 'DRIVER_ASSIGNED'].includes(selected.status) && <button className="secondary cancel-button" disabled={busy} onClick={() => void action(() => api(`/deliveries/${selected.id}/cancel`, token, { method: 'POST' }), 'Delivery cancelled')}>Cancel selected delivery</button>}</section>;
+    <label>Pickup address<input value={pickupAddress} onChange={(event) => setPickupAddress(event.target.value)} disabled={!!pending} required /></label>
+    <label>Latitude<input type="number" step="any" value={pickupLat} onChange={(event) => setPickupLat(event.target.value)} disabled={!!pending} required /></label>
+    <label>Longitude<input type="number" step="any" value={pickupLng} onChange={(event) => setPickupLng(event.target.value)} disabled={!!pending} required /></label>
+    <label>Drop-off address<input value={dropoffAddress} onChange={(event) => setDropoffAddress(event.target.value)} disabled={!!pending} required /></label>
+    <label>Latitude<input type="number" step="any" value={dropoffLat} onChange={(event) => setDropoffLat(event.target.value)} disabled={!!pending} required /></label>
+    <label>Longitude<input type="number" step="any" value={dropoffLng} onChange={(event) => setDropoffLng(event.target.value)} disabled={!!pending} required /></label>
+    <button className="primary" disabled={busy || !ready}>{pending ? 'Retry this delivery' : 'Create delivery'} <span>→</span></button>
+  </form>{uncertain && pending && <p className="muted" role="status">The previous request may have succeeded. Retry this delivery to check its result without creating a duplicate. Check your deliveries before starting a new one.</p>}
+    {uncertain && pending && <button className="secondary" disabled={busy} onClick={clearPending}>Discard retry and start a new delivery</button>}
+    {selected && ['ASSIGNMENT_PENDING', 'DRIVER_ASSIGNED'].includes(selected.status) && <button className="secondary cancel-button" disabled={busy} onClick={() => void action(() => api(`/deliveries/${selected.id}/cancel`, token, { method: 'POST' }), 'Delivery cancelled')}>Cancel selected delivery</button>}</section>;
 }
 
 function DriverPanel({ token, profile, selected, busy, action, toggleGps, gpsActive, sendGps }: { token: string; profile: DriverProfile | null; selected: Delivery | null; busy: boolean; action: (work: () => Promise<unknown>, success: string) => Promise<void>; toggleGps: () => void; gpsActive: boolean; sendGps: (lat: number, lng: number) => void }) {
@@ -270,3 +327,4 @@ function AdminPanel({ token, drivers, jobs, metrics, selected, busy, action }: {
     {jobs.length > 0 && <section className="card"><h2>Failed assignment jobs</h2>{jobs.map((job) => <div className="failed-job" key={job.id}><div><strong>#{shortId(job.payload.deliveryId)}</strong><p>{job.last_error}</p></div><button className="secondary" onClick={() => void action(() => api(`/admin/jobs/${job.id}/retry`, token, { method: 'POST' }), 'Job queued for retry')}>Retry</button></div>)}</section>}
   </div>;
 }
+

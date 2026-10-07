@@ -1,6 +1,6 @@
 # FleetFlow
 
-FleetFlow is a delivery and fleet operations project built with Next.js, Express, PostgreSQL, Redis, and WebSockets. The local application runs without an AWS account. An AWS deployment stack and SQS/EventBridge worker are prepared, but have not been deployed.
+FleetFlow is a delivery and fleet operations project built with Next.js, Express, PostgreSQL, Redis, and WebSockets. The local application runs without an AWS account. The AWS deployment uses ECS Fargate, RDS PostgreSQL, ElastiCache Valkey, SQS, EventBridge, and CloudFront.
 
 ## What works locally
 
@@ -22,7 +22,7 @@ Browser (Next.js :3000)
 PostgreSQL jobs + outbox → separate worker → assignment + notifications
 ```
 
-The local PostgreSQL job table is the durable queue. The outbox is the local domain event mechanism. On AWS, the separate worker forwards assignment jobs to SQS and outbox events to EventBridge. An EventBridge rule sends events to an SQS notification queue. Express serves WebSockets behind an internal Application Load Balancer and CloudFront. **These AWS paths have not been exercised in a live account.**
+The local PostgreSQL job table is the durable queue. The outbox is the local domain event mechanism. On AWS, the separate worker forwards assignment jobs to SQS and outbox events to EventBridge. An EventBridge rule sends events to an SQS notification queue. Express serves WebSockets behind an internal Application Load Balancer and CloudFront. The AWS path passed a live smoke test covering assignment, WebSocket tracking, notifications, idempotency, and roles.
 
 ## Requirements
 
@@ -81,7 +81,7 @@ Run `test:smoke` while PostgreSQL, Redis, the API, and the worker are running an
 
 On 2026-09-29, a local run using the development API and worker with Docker-hosted PostgreSQL and Redis recorded zero failures across 500 authenticated reads and 50 delivery creates. The read p95 was 48.2 ms and create p95 was 84.8 ms. All 100 subscribed WebSocket clients received location updates. A separate run reached 1,000 subscribed clients, all of which received updates, with a 37 ms p95 fan-out delay calculated from server timestamps. A bounded 10,000-client run took 17.3 seconds to establish the subscriptions; all clients received one coalesced GPS update, with 445 ms p95 delivery delay. That run sent five GPS inputs over one second and did not test sustained traffic. These are single-machine observations, not capacity guarantees or AWS results. Multi-instance load has not been tested.
 
-GitHub Actions is configured to run type checks, application and container builds, migrations, and the integration smoke test with temporary PostgreSQL and Redis services. The workflow has not yet run on GitHub. Dockerfiles for the web and API applications are included.
+GitHub Actions runs type checks, application and container builds, migrations, and the integration smoke test with temporary PostgreSQL and Redis services. Successful pushes to `main` can then deploy the AWS application stack after the one-time GitHub OIDC role setup described in [automatic deployment](docs/ci-cd.md). Dockerfiles for the web and API applications are included.
 
 ## AWS deployment
 
@@ -107,3 +107,4 @@ The app admin email is supplied at deployment. Its generated password is in AWS 
 - Assignment uses last sampled driver location in PostgreSQL for durable eligibility and Redis for live tracking. It uses a simple 25 km radius and straight-line distance; road routing and ETA are not included.
 - Location is hot state. Redis keeps the latest location for 60 seconds; PostgreSQL samples it at most every 10 seconds. Some intermediate GPS points can be lost by design.
 - The local worker polls PostgreSQL. The AWS worker, managed networking, secrets, and basic alarms passed the live deployment smoke test. Autoscaling and dedicated dashboards are future improvements.
+
