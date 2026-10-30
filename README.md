@@ -4,7 +4,7 @@ FleetFlow is a delivery and fleet operations project built with Next.js, Express
 
 ## What works locally
 
-- Customers can register, create or cancel deliveries with an idempotency key, view history, follow status changes, and see a driver's latest location on a map.
+- Customers can register, choose pickup and drop-off points through address suggestions, browser location, a map click, or manual coordinates, create or cancel deliveries with an idempotency key, view history, follow status changes, and see a driver's latest location on a map.
 - Drivers can go online, share browser GPS or simulated coordinates, accept or reject assignments, and progress deliveries through pickup, transit, arrival, and completion.
 - Admins can create driver accounts, inspect the fleet and operational metrics, assign or reassign deliveries, mark failed deliveries with a reason, and retry dead assignment jobs.
 - A separate worker assigns the nearest eligible driver within 25 km. PostgreSQL row locks and unique indexes prevent one driver from receiving two active deliveries.
@@ -47,6 +47,8 @@ To try the workflow: sign in as the admin, create a driver, sign in as the drive
 
 The map uses the OpenFreeMap Liberty style by default. Set `NEXT_PUBLIC_MAP_STYLE_URL` at build time to use another MapLibre-compatible style. Set `NEXT_PUBLIC_WS_URL` for a WebSocket endpoint other than `ws://localhost:3001/ws`. Set `API_INTERNAL_URL` for a backend other than `http://localhost:3001`; Next.js uses it in its `/api` rewrite.
 
+Address suggestions and coordinate-to-address lookup use Amazon Location Places in `ap-south-1` (Mumbai), because Places is unavailable in the app's `ap-south-2` Region. The API calls Places with its AWS task role in production. For local address suggestions, configure AWS credentials with Places permissions; the map, browser GPS, and manual coordinate entry still work without AWS credentials. Search results are resolved before creating a delivery, and the selected address is stored with its coordinates. Places requests incur usage charges; searches are debounced, limited to five suggestions, and rate limited per signed-in customer.
+
 ## Key API routes
 
 | Route | Role | Purpose |
@@ -61,6 +63,7 @@ The map uses the OpenFreeMap Liberty style by default. Set `NEXT_PUBLIC_MAP_STYL
 | `POST /api/drivers/me/online`, `/offline` | Driver | Manage availability |
 | `PUT /api/drivers/me/location` | Driver | HTTP location fallback |
 | `GET /api/notifications` | Signed in | In-app notifications |
+| `GET /api/places/suggest`, `POST /api/places/resolve`, `GET /api/places/reverse` | Customer | Search addresses and resolve selected places or map pins |
 | `/api/admin/*` | Admin | Drivers, metrics, manual assignment, dead jobs |
 
 WebSocket clients connect to `/ws`, send `{ "type": "auth", "token": "..." }`, then `{ "type": "subscribe", "deliveryId": "..." }`. Drivers send `{ "type": "location.update", "lat": 12.975, "lng": 77.606 }`. The server authorizes each subscription and sends `delivery.snapshot`, `delivery.event`, and `location.update` messages.

@@ -6,6 +6,7 @@ import { adminRouter } from './admin.js';
 import { deliveriesRouter } from './deliveries.js';
 import { driversRouter } from './drivers.js';
 import { notificationsRouter } from './notifications.js';
+import { placesRouter } from './places.js';
 import { attachWebSocket } from './websocket.js';
 import { pool } from './db.js';
 import { migrate } from './migrate.js';
@@ -27,6 +28,7 @@ app.use('/api/deliveries', deliveriesRouter);
 app.use('/api/drivers', driversRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/places', placesRouter);
 
 app.get('/api/health', (_request, response) => {
   response.json({ status: 'ok', service: 'fleetflow-api' });

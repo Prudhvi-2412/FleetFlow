@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-eventbridge": "^3.1142.0",
+    "@aws-sdk/client-geo-places": "^3.1160.0",
     "@aws-sdk/client-sqs": "^3.1142.0",
     "dotenv": "^16.0.0",
     "express": "^5.0.0",

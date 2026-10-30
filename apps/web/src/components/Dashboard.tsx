@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import type { Delivery, Driver, Job, Location, Metrics, Notification, Session } from '../lib/types';
 import { MapView } from './MapView';
+import { LocationPickerMap } from './LocationPickerMap';
 
 type DriverProfile = { user_id: string; is_online: boolean; last_lat: number | null; last_lng: number | null };
 type SocketMessage = { type: string; deliveryId?: string; driverId?: string; lat?: number; lng?: number; timestamp?: string; location?: Location | null };
 type DeliveryInput = { pickup: { address: string; lat: number; lng: number }; dropoff: { address: string; lat: number; lng: number } };
 type PendingDelivery = { key: string; input: DeliveryInput };
+type PlacePoint = { address: string; lat: number; lng: number };
+type PlaceSuggestion = { placeId: string; title: string; address: string };
 
 function shortId(id: string) { return id.slice(0, 8).toUpperCase(); }
 function date(value: string) { return new Date(value).toLocaleString(); }
@@ -210,13 +213,57 @@ export function Dashboard({ session, onSignOut }: { session: Session; onSignOut:
   );
 }
 
+function AddressSearch({ label, value, token, disabled, bias, onChange, onSelect }: {
+  label: string;
+  value: string;
+  token: string;
+  disabled: boolean;
+  bias: { lat: number; lng: number } | null;
+  onChange: (value: string) => void;
+  onSelect: (placeId: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (disabled || value !== query || query.trim().length < 3) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      const biasQuery = bias ? `&lat=${bias.lat}&lng=${bias.lng}` : '';
+      void api<{ suggestions: PlaceSuggestion[] }>(`/places/suggest?q=${encodeURIComponent(query.trim())}${biasQuery}`, token, { signal: controller.signal })
+        .then((result) => { setSuggestions(result.suggestions); setError(false); })
+        .catch(() => { if (!controller.signal.aborted) { setSuggestions([]); setError(true); } });
+    }, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [query, value, token, disabled, bias?.lat, bias?.lng]);
+
+  return <div className="address-search">
+    <label>{label}<input value={value} disabled={disabled} placeholder="Search for a place or address" autoComplete="off" required onChange={(event) => {
+      onChange(event.target.value);
+      setQuery(event.target.value);
+      setSuggestions([]);
+      setError(false);
+    }} /></label>
+    {!disabled && value === query && suggestions.length > 0 && <div className="place-suggestions" role="listbox" aria-label={`${label} suggestions`}>
+      {suggestions.map((item) => <button type="button" role="option" aria-selected={false} key={item.placeId} onClick={() => {
+        setQuery(''); setSuggestions([]); onSelect(item.placeId);
+      }}><strong>{item.title}</strong>{item.address && <small>{item.address}</small>}</button>)}
+    </div>}
+    {error && !disabled && value === query && <small className="form-error">Suggestions unavailable. Choose a point on the map or enter coordinates below.</small>}
+  </div>;
+}
+
 function CustomerPanel({ customerId, token, selected, busy, action }: { customerId: string; token: string; selected: Delivery | null; busy: boolean; action: (work: () => Promise<unknown>, success: string) => Promise<void> }) {
-  const [pickupAddress, setPickupAddress] = useState('MG Road, Bengaluru');
-  const [pickupLat, setPickupLat] = useState('12.9750');
-  const [pickupLng, setPickupLng] = useState('77.6060');
-  const [dropoffAddress, setDropoffAddress] = useState('Indiranagar, Bengaluru');
-  const [dropoffLat, setDropoffLat] = useState('12.9719');
-  const [dropoffLng, setDropoffLng] = useState('77.6412');
+  const [pickupAddress, setPickupAddress] = useState('');
+  const [pickupLat, setPickupLat] = useState('');
+  const [pickupLng, setPickupLng] = useState('');
+  const [dropoffAddress, setDropoffAddress] = useState('');
+  const [dropoffLat, setDropoffLat] = useState('');
+  const [dropoffLng, setDropoffLng] = useState('');
+  const [activePoint, setActivePoint] = useState<'pickup' | 'dropoff'>('pickup');
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState('');
   const [pending, setPending] = useState<PendingDelivery | null>(null);
   const [ready, setReady] = useState(false);
   const [uncertain, setUncertain] = useState(false);
@@ -249,9 +296,52 @@ function CustomerPanel({ customerId, token, selected, busy, action }: { customer
     try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be unavailable. */ }
   }
 
+  function setPoint(kind: 'pickup' | 'dropoff', point: PlacePoint) {
+    if (kind === 'pickup') {
+      setPickupAddress(point.address); setPickupLat(String(point.lat)); setPickupLng(String(point.lng));
+    } else {
+      setDropoffAddress(point.address); setDropoffLat(String(point.lat)); setDropoffLng(String(point.lng));
+    }
+    setLocationError('');
+  }
+
+  async function resolvePlace(kind: 'pickup' | 'dropoff', placeId: string) {
+    setLocating(true);
+    try {
+      const point = await api<PlacePoint>('/places/resolve', token, { method: 'POST', body: JSON.stringify({ placeId }) });
+      setPoint(kind, point);
+    } catch (error) {
+      setLocationError(error instanceof Error ? error.message : 'Could not select that place');
+    } finally { setLocating(false); }
+  }
+
+  async function selectMapPoint(kind: 'pickup' | 'dropoff', lat: number, lng: number) {
+    setLocating(true);
+    try {
+      const point = await api<PlacePoint>(`/places/reverse?lat=${lat}&lng=${lng}`, token);
+      setPoint(kind, point);
+    } catch {
+      setPoint(kind, { address: `Map pin at ${lat.toFixed(5)}, ${lng.toFixed(5)}`, lat, lng });
+    } finally { setLocating(false); }
+  }
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) { setLocationError('Location access is unavailable in this browser'); return; }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => { void selectMapPoint('pickup', position.coords.latitude, position.coords.longitude); },
+      (error) => { setLocating(false); setLocationError(`Location access: ${error.message}`); },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    );
+  }
+
   function submit(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !ready || submitting.current) return;
+    if (busy || locating || !ready || submitting.current) return;
+    if (!pending && (!pickupAddress.trim() || !dropoffAddress.trim() || !pickupLat || !pickupLng || !dropoffLat || !dropoffLng)) {
+      setLocationError('Choose both pickup and drop-off locations from suggestions or the map');
+      return;
+    }
     submitting.current = true;
     const attempt = pending ?? {
       key: crypto.randomUUID(),
@@ -278,17 +368,38 @@ function CustomerPanel({ customerId, token, selected, busy, action }: { customer
       }
     }, 'Delivery created. Searching for an available driver.').finally(() => { submitting.current = false; });
   }
-  return <section className="card create-card"><div className="card-heading"><h2>Create a delivery</h2><span className="muted">Enter real coordinates for a local demo</span></div><form className="delivery-form" onSubmit={submit}>
-    <label>Pickup address<input value={pickupAddress} onChange={(event) => setPickupAddress(event.target.value)} disabled={!!pending} required /></label>
-    <label>Latitude<input type="number" step="any" value={pickupLat} onChange={(event) => setPickupLat(event.target.value)} disabled={!!pending} required /></label>
-    <label>Longitude<input type="number" step="any" value={pickupLng} onChange={(event) => setPickupLng(event.target.value)} disabled={!!pending} required /></label>
-    <label>Drop-off address<input value={dropoffAddress} onChange={(event) => setDropoffAddress(event.target.value)} disabled={!!pending} required /></label>
-    <label>Latitude<input type="number" step="any" value={dropoffLat} onChange={(event) => setDropoffLat(event.target.value)} disabled={!!pending} required /></label>
-    <label>Longitude<input type="number" step="any" value={dropoffLng} onChange={(event) => setDropoffLng(event.target.value)} disabled={!!pending} required /></label>
-    <button className="primary" disabled={busy || !ready}>{pending ? 'Retry this delivery' : 'Create delivery'} <span>→</span></button>
-  </form>{uncertain && pending && <p className="muted" role="status">The previous request may have succeeded. Retry this delivery to check its result without creating a duplicate. Check your deliveries before starting a new one.</p>}
+  const pickup = pickupLat && pickupLng ? { lat: Number(pickupLat), lng: Number(pickupLng) } : null;
+  const dropoff = dropoffLat && dropoffLng ? { lat: Number(dropoffLat), lng: Number(dropoffLng) } : null;
+  const locked = !!pending || busy || locating;
+  return <section className="card create-card">
+    <div className="card-heading"><h2>Create a delivery</h2><span className="muted">Search or choose points on the map</span></div>
+    <form className="delivery-form" onSubmit={submit}>
+      <div className="location-field">
+        <AddressSearch label="Pickup" value={pickupAddress} token={token} disabled={locked} bias={pickup} onChange={(value) => { setPickupAddress(value); setPickupLat(''); setPickupLng(''); }} onSelect={(id) => { void resolvePlace('pickup', id); }} />
+        <button type="button" className="secondary" disabled={locked} onClick={useCurrentLocation}>Use my location</button>
+        {pickup && <small className="chosen-coordinate">{pickup.lat.toFixed(5)}, {pickup.lng.toFixed(5)}</small>}
+      </div>
+      <div className="location-field">
+        <AddressSearch label="Drop-off" value={dropoffAddress} token={token} disabled={locked} bias={pickup} onChange={(value) => { setDropoffAddress(value); setDropoffLat(''); setDropoffLng(''); }} onSelect={(id) => { void resolvePlace('dropoff', id); }} />
+        {dropoff && <small className="chosen-coordinate">{dropoff.lat.toFixed(5)}, {dropoff.lng.toFixed(5)}</small>}
+      </div>
+      <div className="location-map-section">
+        <div className="button-row"><span className="muted">Map click sets:</span><button type="button" className={activePoint === 'pickup' ? 'primary' : 'secondary'} disabled={locked} onClick={() => setActivePoint('pickup')}>Pickup</button><button type="button" className={activePoint === 'dropoff' ? 'primary' : 'secondary'} disabled={locked} onClick={() => setActivePoint('dropoff')}>Drop-off</button></div>
+        <LocationPickerMap pickup={pickup} dropoff={dropoff} active={activePoint} onPick={(lat, lng) => { if (!locked) void selectMapPoint(activePoint, lat, lng); }} />
+      </div>
+      <details className="manual-coordinates"><summary>Enter coordinates manually</summary><div>
+        <label>Pickup latitude<input type="number" step="any" value={pickupLat} disabled={locked} onChange={(event) => setPickupLat(event.target.value)} /></label>
+        <label>Pickup longitude<input type="number" step="any" value={pickupLng} disabled={locked} onChange={(event) => setPickupLng(event.target.value)} /></label>
+        <label>Drop-off latitude<input type="number" step="any" value={dropoffLat} disabled={locked} onChange={(event) => setDropoffLat(event.target.value)} /></label>
+        <label>Drop-off longitude<input type="number" step="any" value={dropoffLng} disabled={locked} onChange={(event) => setDropoffLng(event.target.value)} /></label>
+      </div></details>
+      {locationError && <p className="form-error" role="alert">{locationError}</p>}
+      <button className="primary" disabled={busy || locating || !ready}>{pending ? 'Retry this delivery' : 'Create delivery'} <span>→</span></button>
+    </form>
+    {uncertain && pending && <p className="muted" role="status">The previous request may have succeeded. Retry this delivery to check its result without creating a duplicate. Check your deliveries before starting a new one.</p>}
     {uncertain && pending && <button className="secondary" disabled={busy} onClick={clearPending}>Discard retry and start a new delivery</button>}
-    {selected && ['ASSIGNMENT_PENDING', 'DRIVER_ASSIGNED'].includes(selected.status) && <button className="secondary cancel-button" disabled={busy} onClick={() => void action(() => api(`/deliveries/${selected.id}/cancel`, token, { method: 'POST' }), 'Delivery cancelled')}>Cancel selected delivery</button>}</section>;
+    {selected && ['ASSIGNMENT_PENDING', 'DRIVER_ASSIGNED'].includes(selected.status) && <button className="secondary cancel-button" disabled={busy} onClick={() => void action(() => api(`/deliveries/${selected.id}/cancel`, token, { method: 'POST' }), 'Delivery cancelled')}>Cancel selected delivery</button>}
+  </section>;
 }
 
 function DriverPanel({ token, profile, selected, busy, action, toggleGps, gpsActive, sendGps }: { token: string; profile: DriverProfile | null; selected: Delivery | null; busy: boolean; action: (work: () => Promise<unknown>, success: string) => Promise<void>; toggleGps: () => void; gpsActive: boolean; sendGps: (lat: number, lng: number) => void }) {

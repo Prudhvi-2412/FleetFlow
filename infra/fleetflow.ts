@@ -167,7 +167,7 @@ class FleetFlowStack extends cdk.Stack {
     const apiContainer = task.addContainer('api', {
       image: apiImage,
       logging: ecs.LogDrivers.awsLogs({ logGroup: apiLog, streamPrefix: 'api' }),
-      environment: { ...sharedEnvironment, WEB_ORIGIN: 'same-host', AUTO_MIGRATE: 'true', AUTO_SEED_ADMIN: 'true', ADMIN_EMAIL: adminEmail },
+      environment: { ...sharedEnvironment, WEB_ORIGIN: 'same-host', AUTO_MIGRATE: 'true', AUTO_SEED_ADMIN: 'true', ADMIN_EMAIL: adminEmail, GEO_PLACES_REGION: 'ap-south-1' },
       secrets: { ...sharedSecrets, JWT_SECRET: ecs.Secret.fromSecretsManager(jwtSecret), ADMIN_PASSWORD: ecs.Secret.fromSecretsManager(adminPassword) },
       memoryReservationMiB: 384,
     });
@@ -194,6 +194,11 @@ class FleetFlowStack extends cdk.Stack {
     workerContainer.addContainerDependencies({ container: apiContainer, condition: ecs.ContainerDependencyCondition.START });
 
     assignment.live.grantSendMessages(task.taskRole);
+    task.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['geo-places:Suggest', 'geo-places:GetPlace', 'geo-places:ReverseGeocode'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'aws:RequestedRegion': 'ap-south-1' } },
+    }));
     assignment.live.grantConsumeMessages(task.taskRole);
     notification.live.grantConsumeMessages(task.taskRole);
     bus.grantPutEventsTo(task.taskRole);
