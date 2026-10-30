@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     services:
       postgres:
         image: postgres:17-alpine
@@ -71,7 +71,7 @@ jobs:
     name: Deploy to AWS
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     permissions:
       contents: read
@@ -82,8 +82,6 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
       - run: npm ci
       - name: Check AWS role configuration
         env:
